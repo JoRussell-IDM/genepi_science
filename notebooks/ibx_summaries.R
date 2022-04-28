@@ -17,7 +17,7 @@ for(p in c('jsonlite', 'data.table', 'dplyr', 'ggplot2','ggpubr')){
 }
 theme_set(theme_bw())
 
-project_dir <-'/mnt/data/malaria/synthetic_genomes/testing/genotype_subset/output/summaries'
+
 plot_output_dir <- paste(project_dir, "plots", sep="/")
 if (!dir.exists(plot_output_dir)){ dir.create(plot_output_dir) }
 
@@ -98,17 +98,19 @@ colors <- function(df){
 
 mean_pop_plot <- function(df){
   df <- df %>%
-    dplyr::mutate(initial = gsub("[[:alpha:]]", "", genotype)) %>%
-    tidyr::separate(initial, c("variants", "af", "seed"), sep="_") %>%
-    dplyr::mutate(variants = ifelse(genotype == "interval", "All", variants),
-                  af = ifelse(genotype == "interval", "NA", af)) 
-    if("All" %in% unique(df$variants)){
-      variants = gtools::mixedsort(unique(df$variants))
-      var_cols = setNames(c(base_cols[1:length(variants)-1], "tan4"), variants)
-    } else {
-      variants = sorted(unique(df$variants))
-      var_cols = setNames(base_cols[1:length(variants)], variants)
-    }
+    dplyr::mutate(genotype = ifelse(genotype != "interval", gsub("[[:alpha:]]", "", genotype), "All_NA_NA")) %>%
+    tidyr::separate(genotype, c("variants", "af", "seed"), sep="_", remove = F)
+  
+  if(!"subset_replicate" %in% names(df)){
+    df$subset_replicate <- "0"
+  }
+  
+  variants = gtools::mixedsort(unique(df$variants))
+  if("All" %in% unique(df$variants)){
+    var_cols = setNames(c(base_cols[1:length(variants)-1], "tan4"), variants)
+  } else {
+    var_cols = setNames(base_cols[1:length(variants)], variants)
+  }
   
    p <- df %>%
      ggplot(aes(x = year, y=mean, ymax = mean + std, ymin = mean - std,
@@ -127,11 +129,9 @@ mean_pop_plot <- function(df){
 
 mean_cotxn_plot <- function(df){
   df <- df %>%
-    dplyr::mutate(initial = gsub("[[:alpha:]]", "", genotype)) %>%
-    tidyr::separate(initial, c("variants", "af", "seed"), sep="_") %>%
-    dplyr::mutate(variants = ifelse(genotype == "interval", "All", variants),
-                  af = ifelse(genotype == "interval", "NA", af),
-                  cotxn = ifelse(grepl("_", infIndex), "Co-transmission", "Superinfection"),
+    dplyr::mutate(genotype = ifelse(genotype != "interval", gsub("[[:alpha:]]", "", genotype), "All_NA_NA")) %>%
+    tidyr::separate(genotype, c("variants", "af", "seed"), sep="_", remove=F) %>%
+    dplyr::mutate(cotxn = ifelse(grepl("_", infIndex), "Co-transmission", "Superinfection"),
                   color_var = paste(variants, af),
                   color_var = factor(color_var, levels = gtools::mixedsort(unique(color_var)))) 
     new_colors <- colors(df)
@@ -189,14 +189,115 @@ ibx_plots <- function(json_list, name){
          width = 7, height = 5, units = c("in"), dpi = 300)
 }
 
+
+ibx_base <- function(df, year){
+  p <- dplyr::filter(df, is.na(age_bin) & year == !!year) %>%
+    ggplot(aes(x=aEIR, y=mean, color=af)) + 
+    geom_linerange(aes(ymin = mean - std, ymax = mean + std), 
+                   alpha=0.2) +
+    geom_point(alpha=0.5) +
+    scale_x_log10() +
+    scale_color_manual(values=RColorBrewer::brewer.pal(3, "Set1")) +
+    labs(x="Average EIR",
+         y="Mean population IBx\n(-/+ 1 SD)",
+         color="Seeding allele\nfrequency")
+  return(p)
+}
+
+inf_base <- function(df, year){
+  p <- dplyr::filter(df, year == !!year) %>% 
+    ggplot(aes(x = cotxn, y = mean, fill = af)) +
+    geom_boxplot() +
+    scale_fill_manual(values=RColorBrewer::brewer.pal(3, "Set1")) +
+    labs(x= "Transmission mechanism", 
+         y = "Mean infection strain relatedness\n(NA = Root IBD, Other = IBS)",
+         fill = "Seeding\nallele\nfrequency") +
+    facet_grid(~round(aEIR, 3)) + 
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+  return(p)
+}
+
+df_reframe <- function(df, mapping_file){
+  r_df <- df %>%
+    dplyr::left_join(., mapping_file) %>%
+    dplyr::mutate(genotype = ifelse(grepl("interval", genotype), gsub("interval", "All_NA_NA", genotype), 
+                                    gsub("[[:alpha:]]", "", genotype))) %>%
+    tidyr::separate(genotype, c("variants", "af", "seed"), sep="_")
+  return(r_df)
+}
+
 ################################################################################
+# load and format files
+################################################################################
+project_dir <- '/mnt/data/malaria/synthetic_genomes/fixed_txn_report_test/replicates/summaries'
+plot_dir <- '/mnt/data/malaria/synthetic_genomes/fixed_txn_report_test/obs_layer_plots' 
+
+sim_mapping <- fread('/mnt/data/malaria/synthetic_genomes/fixed_txn_report_test/sim_id_mapping.csv')
+inf_files <- list.files(paste(project_dir, "..", "..", sep="/"), pattern = "infIndexRecursive-genomes-df.csv", full.names = T, recursive = T)
+inf_mapping <- lapply(inf_files, fread)
+names(inf_mapping) <- gsub(".*output/|\\/inf.*", "", inf_files)
+inf_mapping <- dplyr::bind_rows(inf_mapping, .id="sim_id")
+
 ibx_files <- list.files(project_dir, pattern = "-ibxSummary.json" , full.names = T, recursive = T)
 ibx_list <- lapply(ibx_files, ibx_json2df)
-names(ibx_list) <- gsub("-ibx.*", "", basename(ibx_files))
+names(ibx_list) <- gsub("-year.*", "", basename(ibx_files))
+# ibx_list_old <- ibx_list
 
+
+################################################################################
+# plotting
+################################################################################
+project_dir <- '/mnt/data/malaria/synthetic_genomes/fixed_txn_report_test/replicates/summaries'
+plot_dir <- '/mnt/data/malaria/synthetic_genomes/fixed_txn_report_test/obs_layer_plots' 
+
+################################################################################
+# individual plots for each report
 lapply(names(ibx_list), function(x) ibx_plots(ibx_list[[x]], x))
 
+################################################################################
+# EIR v. population IBx  
+agg_df <- df_reframe(bind_rows(lapply(ibx_list, "[[", 1), .id="sim_id"), sim_mapping) %>%
+  dplyr::filter(agg_df, is.na(age_bin))
+
+year_ibx_plots <- lapply(setNames(unique(agg_rmBin$year), unique(agg_rmBin$year)), function(i){
+  p <- ibx_base(dplyr::filter(agg_rmBin, variants %in% c("24", "All")), i)
+})
+
+# save plots
+lapply(names(year_ibx_plots), function(s){
+  ggsave(paste0(format(Sys.time(), "%Y%m%d"), "_variants24_year", s, "_popIbx.svg"), 
+         plot = year_ibx_plots[[s]],
+         path = plot_dir,
+         width = 6, height = 3, units = c("in"), dpi = 300)
+})
+
+################################################################################
+# Transmission mechanism v. infection IBx
+inf_df <- df_reframe(bind_rows(lapply(ibx_list, "[[", 2), .id="sim_id"), sim_mapping) %>%
+  tidyr::separate(infIndex, c("infIndex", "parentInfIndex"), sep="_")  %>%
+  dplyr::mutate(infIndex = as.numeric(infIndex),
+                cotxn = ifelse(is.na(parentInfIndex), "Superinfection", "Co-transmission")) %>%
+  dplyr::left_join(., inf_mapping)
+eir_reports <- c("cf6fa3d2-435c-ec11-a9f1-9440c9be2c51", 
+                 "b1ad2bdb-435c-ec11-a9f1-9440c9be2c51",
+                 "a2a588e8-435c-ec11-a9f1-9440c9be2c51")
+
+inf_plots <- lapply(setNames(unique(inf_df$year), unique(inf_df$year)), function(i){
+  inf_base(dplyr::filter(inf_df, variants %in% c("All", "24") & sim_id %in% eir_reports), i)
+})
+
+inf_plots$`0` <- NULL
+lapply(names(inf_plots), function(s){
+  ggsave(paste0(format(Sys.time(), "%Y%m%d"), "_variants24_year", s, "_transmissionIbx.svg"), 
+         plot = inf_plots[[s]],
+         path = plot_dir,
+         width = 6, height = 4, units = c("in"), dpi = 300)
+})
+
+
+################################################################################
 # individual distributions
+################################################################################
 ibx_outdir <- '/mnt/data/malaria/synthetic_genomes/testing/genotype_subset/output/Habitat_0.572/features/year'
 ibxDist_files <- list.files(ibx_outdir, pattern = "-ibxDistribution.json" , full.names = T, recursive = T)
 ibxDist_list <- lapply(ibxDist_files, ibxDist_json2df)
@@ -229,7 +330,11 @@ ggsave(paste0(format(Sys.time(), "%Y%m%d"), "_", name, "_ibxPopulationDist.png")
        width = 12, height = 4, units = c("in"), dpi = 300)
 
 
-infDist <- bind_rows(sapply(ibxDist_list, "[", 2), .id="genotype")  %>%
+
+################################################################################
+# individual infections
+################################################################################
+infDist <- bind_rows(sapply(ibx_list, "[", 2), .id="genotype")  %>%
   tidyr::separate(genotype, c("genotype", "grouping"), sep="\\.(?=[^\\.]+$)") %>%
   dplyr::mutate(genotype = ifelse(grepl("interval", genotype), gsub("interval", "All_NA_NA", genotype), gsub("[[:alpha:]]", "", genotype)),
                 cotxn = ifelse(grepl("_", infIndex), "Co-transmission", "Superinfection")) %>%
@@ -256,4 +361,34 @@ ggsave(paste0(format(Sys.time(), "%Y%m%d"), "_", name, "_ibxTransmissionDist.png
        plot = infDistAll,
        path = plot_output_dir,
        width = 12, height = 8, units = c("in"), dpi = 300)
+
+
+################################################################################
+# testing inset chart code
+################################################################################
+report_path <- "/mnt/data/malaria/synthetic_genomes/dtk_downloads/test_fixed_transmission_reports"
+inset_files <- list.files(report_path, full.names = T, recursive = T, pattern="InsetChart")
+
+inset_summary <- function(inset_file){
+  inset_json <- read_json(inset_file)
+  channels <-  rlist::list.cbind(sapply(inset_json[['Channels']], "[", 2))[-1,]
+  column_df <- cbind.data.frame(
+    day = seq(1, inset_json[['Header']][['Timesteps']]),
+    year = floor(seq(1, inset_json[['Header']][['Timesteps']])/365.24),
+    channels
+  )
+  names(column_df) <- gsub(".Data", "", names(column_df))
+  return(column_df)
+}
+
+inset_data <- lapply(inset_files, inset_summary)
+names(inset_data) <- gsub(".*reports/|\\/Inset.*", "\\1", inset_files)
+inset_df <- dplyr::bind_rows(inset_data, .id="sim_id")
+
+
+################################################################################
+inset_eir <- dplyr::select(inset_df, sim_id, year, Daily.EIR) %>%
+  dplyr::group_by(sim_id, year) %>%
+  dplyr::summarise(median_eir = median(Daily.EIR))
+
 

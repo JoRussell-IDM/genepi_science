@@ -17,7 +17,7 @@ for(p in c('jsonlite', 'data.table', 'dplyr', 'ggplot2','ggpubr')){
 }
 theme_set(theme_bw())
 
-project_dir <-'/mnt/data/malaria/synthetic_genomes/testing/genotype_subset/output'
+project_dir <-'/mnt/data/malaria/synthetic_genomes/fixed_txn_report_test/output/summaries'
 plot_output_dir <- paste(project_dir, "summaries/plots", sep="/")
 if (!dir.exists(plot_output_dir)){ dir.create(plot_output_dir) }
 
@@ -86,7 +86,8 @@ p_af <- function(df){
 }
 
 ################################################################################
-het_files <- list.files(project_dir, pattern = "hetDistribution.json" , full.names = T, recursive = T)
+het_dir <- '/mnt/data/malaria/synthetic_genomes/fixed_txn_report_test/output/'
+het_files <- list.files(het_dir, pattern = "hetDistribution.json" , full.names = T, recursive = T)
 het_list <- lapply(het_files, json2groups)
 names(het_list) <- gsub("-", "_", basename(het_files))
 
